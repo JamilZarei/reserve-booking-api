@@ -1,0 +1,346 @@
+{
+  "info": {
+    "name": "Reserve API - سامانه رزرو اقامتگاه",
+    "description": "مجموعه تست APIهای سامانه رزرو اقامتگاه. ترتیب اجرا مهم است: ابتدا پوشه 1 (ورود) را اجرا کنید تا توکن‌ها ذخیره شوند. برای اجرای خودکار همه: روی نام کالکشن کلیک راست → Run collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:8000" },
+    { "key": "password", "value": "Pass@1234" },
+    { "key": "guestToken", "value": "" },
+    { "key": "guest2Token", "value": "" },
+    { "key": "hostToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "bookingId", "value": "" },
+    { "key": "newPropertyId", "value": "" },
+    { "key": "newUnitId", "value": "" },
+    { "key": "checkIn", "value": "" },
+    { "key": "checkOut", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Booking dates: 30 days from today, for 3 nights",
+          "const d = new Date(); d.setDate(d.getDate() + 30);",
+          "const o = new Date(d); o.setDate(o.getDate() + 3);",
+          "pm.collectionVariables.set('checkIn', d.toISOString().slice(0, 10));",
+          "pm.collectionVariables.set('checkOut', o.toISOString().slice(0, 10));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0. سلامت سرویس",
+      "item": [
+        {
+          "name": "Health check",
+          "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('سرویس و دیتابیس سالم است', () => pm.expect(pm.response.json().database).to.eql('connected'));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "1. احراز هویت",
+      "item": [
+        {
+          "name": "Login - مهمان (علی محمدی)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "username", "value": "ali.mohammadi@reserve.test" },
+              { "key": "password", "value": "{{password}}" } ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('ورود موفق', () => pm.response.to.have.status(200));",
+            "pm.collectionVariables.set('guestToken', pm.response.json().access_token);"
+          ] } }]
+        },
+        {
+          "name": "Login - مهمان دوم با موبایل (زهرا حسینی)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "username", "value": "09351237846" },
+              { "key": "password", "value": "{{password}}" } ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('ورود با موبایل موفق', () => pm.response.to.have.status(200));",
+            "pm.collectionVariables.set('guest2Token', pm.response.json().access_token);"
+          ] } }]
+        },
+        {
+          "name": "Login - میزبان (رضا احمدی)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "username", "value": "reza.ahmadi@reserve.test" },
+              { "key": "password", "value": "{{password}}" } ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('ورود موفق', () => pm.response.to.have.status(200));",
+            "pm.collectionVariables.set('hostToken', pm.response.json().access_token);"
+          ] } }]
+        },
+        {
+          "name": "Login - ادمین",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "username", "value": "admin@reserve.test" },
+              { "key": "password", "value": "{{password}}" } ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('ورود موفق', () => pm.response.to.have.status(200));",
+            "pm.collectionVariables.set('adminToken', pm.response.json().access_token);"
+          ] } }]
+        },
+        {
+          "name": "Login - رمز اشتباه (باید 401 بدهد)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "urlencoded", "urlencoded": [
+              { "key": "username", "value": "ali.mohammadi@reserve.test" },
+              { "key": "password", "value": "wrong-password" } ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('رمز اشتباه رد می‌شود', () => pm.response.to.have.status(401));"
+          ] } }]
+        },
+        {
+          "name": "Register - ثبت‌نام کاربر جدید",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"full_name\": \"کاربر تست\",\n  \"email\": \"user{{$timestamp}}@example.com\",\n  \"phone\": \"{{phone}}\",\n  \"password\": \"Pass@1234\",\n  \"role\": \"guest\"\n}" }
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "// A unique, valid 11-digit mobile number",
+              "pm.variables.set('phone', '0912' + String(Date.now()).slice(-7));"
+            ] } },
+            { "listen": "test", "script": { "exec": [
+              "pm.test('ثبت‌نام موفق', () => pm.response.to.have.status(201));"
+            ] } }
+          ]
+        },
+        {
+          "name": "Me - پروفایل من",
+          "request": {
+            "method": "GET", "url": "{{baseUrl}}/auth/me",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{guestToken}}" }] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('نام کاربر درست است', () => pm.expect(pm.response.json().full_name).to.eql('علی محمدی'));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "2. اطلاعات پایه و جستجو",
+      "item": [
+        { "name": "شهرها", "request": { "method": "GET", "url": "{{baseUrl}}/cities" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('۱۶ شهر', () => pm.expect(pm.response.json().length).to.eql(16));"] } }] },
+        { "name": "انواع اقامتگاه", "request": { "method": "GET", "url": "{{baseUrl}}/property-types" } },
+        { "name": "امکانات", "request": { "method": "GET", "url": "{{baseUrl}}/amenities" } },
+        { "name": "قوانین لغو", "request": { "method": "GET", "url": "{{baseUrl}}/cancellation-policies" } },
+        {
+          "name": "جستجو - اقامتگاه‌های کاشان",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/properties?city=کاشان", "host": ["{{baseUrl}}"], "path": ["properties"], "query": [{ "key": "city", "value": "کاشان" }] } },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('یک نتیجه', () => pm.expect(pm.response.json().length).to.eql(1));"] } }]
+        },
+        {
+          "name": "جستجو - استخر + ویو دریا، ارزان‌ترین اول",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/properties?amenity_ids=3&amenity_ids=13&sort=price_asc", "host": ["{{baseUrl}}"], "path": ["properties"], "query": [{ "key": "amenity_ids", "value": "3" }, { "key": "amenity_ids", "value": "13" }, { "key": "sort", "value": "price_asc" }] } }
+        },
+        {
+          "name": "جستجو - مازندران، ۴ نفر، با تاریخ",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/properties?province=مازندران&guests=4&check_in={{checkIn}}&check_out={{checkOut}}", "host": ["{{baseUrl}}"], "path": ["properties"], "query": [{ "key": "province", "value": "مازندران" }, { "key": "guests", "value": "4" }, { "key": "check_in", "value": "{{checkIn}}" }, { "key": "check_out", "value": "{{checkOut}}" }] } }
+        },
+        { "name": "جزئیات اقامتگاه ۴ (بوم‌گردی کاشان)", "request": { "method": "GET", "url": "{{baseUrl}}/properties/4" } },
+        { "name": "نظرات اقامتگاه ۴", "request": { "method": "GET", "url": "{{baseUrl}}/properties/4/reviews" } },
+        {
+          "name": "تقویم قیمت واحد ۱ (ویلا نوشهر)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/units/1/calendar?start=2026-11-15&end=2026-11-25", "host": ["{{baseUrl}}"], "path": ["units", "1", "calendar"], "query": [{ "key": "start", "value": "2026-11-15" }, { "key": "end", "value": "2026-11-25" }] } }
+        }
+      ]
+    },
+    {
+      "name": "3. فرایند رزرو (مهمان)",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{guestToken}}" }] },
+      "item": [
+        {
+          "name": "استعلام قیمت با کد تخفیف",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/units/3/quote?check_in={{checkIn}}&check_out={{checkOut}}&guests=2&coupon_code=WELCOME1405", "host": ["{{baseUrl}}"], "path": ["units", "3", "quote"], "query": [{ "key": "check_in", "value": "{{checkIn}}" }, { "key": "check_out", "value": "{{checkOut}}" }, { "key": "guests", "value": "2" }, { "key": "coupon_code", "value": "WELCOME1405" }] } },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('۳ شب با تخفیف', () => { const q = pm.response.json(); pm.expect(q.nights).to.eql(3); pm.expect(q.discount).to.be.above(0); });"
+          ] } }]
+        },
+        {
+          "name": "ثبت رزرو",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/bookings",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"unit_id\": 3,\n  \"check_in\": \"{{checkIn}}\",\n  \"check_out\": \"{{checkOut}}\",\n  \"guests_count\": 2,\n  \"coupon_code\": \"WELCOME1405\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('رزرو ساخته شد (pending)', () => { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('pending'); });",
+            "pm.collectionVariables.set('bookingId', pm.response.json().id);"
+          ] } }]
+        },
+        {
+          "name": "رزرو هم‌پوشان توسط مهمان دیگر (باید 409 بدهد)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/bookings",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{guest2Token}}" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"unit_id\": 3,\n  \"check_in\": \"{{checkIn}}\",\n  \"check_out\": \"{{checkOut}}\",\n  \"guests_count\": 1\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('تداخل رزرو رد شد', () => pm.response.to.have.status(409));"] } }]
+        },
+        {
+          "name": "پرداخت ناموفق (شبیه‌سازی)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/bookings/{{bookingId}}/pay",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"method\": \"sep_saman\",\n  \"simulate_failure\": true\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('وضعیت failed', () => pm.expect(pm.response.json().status).to.eql('failed'));"] } }]
+        },
+        {
+          "name": "پرداخت موفق",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/bookings/{{bookingId}}/pay",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"method\": \"zarinpal\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('وضعیت paid', () => pm.expect(pm.response.json().status).to.eql('paid'));"] } }]
+        },
+        {
+          "name": "جزئیات رزرو (باید confirmed باشد)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/bookings/{{bookingId}}" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('تأیید شد', () => pm.expect(pm.response.json().status).to.eql('confirmed'));"] } }]
+        },
+        { "name": "رزروهای من", "request": { "method": "GET", "url": "{{baseUrl}}/bookings/me" } },
+        {
+          "name": "لغو رزرو و محاسبه استرداد",
+          "request": { "method": "POST", "url": "{{baseUrl}}/bookings/{{bookingId}}/cancel" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('لغو شد', () => pm.expect(pm.response.json().booking.status).to.eql('cancelled'));"] } }]
+        },
+        { "name": "تراکنش‌های رزرو", "request": { "method": "GET", "url": "{{baseUrl}}/bookings/{{bookingId}}/payments" } },
+        {
+          "name": "ثبت نظر روی رزروی که تمام نشده (باید 409 بدهد)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/bookings/{{bookingId}}/review",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"rating\": 5,\n  \"comment\": \"عالی\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('رد شد', () => pm.response.to.have.status(409));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "4. علاقه‌مندی و پیام",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{guestToken}}" }] },
+      "item": [
+        { "name": "علاقه‌مندی‌های من", "request": { "method": "GET", "url": "{{baseUrl}}/favorites" } },
+        { "name": "افزودن اقامتگاه ۴ به علاقه‌مندی", "request": { "method": "POST", "url": "{{baseUrl}}/favorites/4" } },
+        { "name": "حذف اقامتگاه ۴ از علاقه‌مندی", "request": { "method": "DELETE", "url": "{{baseUrl}}/favorites/4" } },
+        {
+          "name": "ارسال پیام به میزبان",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/messages",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"receiver_id\": 2,\n  \"body\": \"سلام، ویلای کلاردشت برای دی‌ماه خالی است؟\"\n}" }
+          }
+        },
+        { "name": "پیام‌های من", "request": { "method": "GET", "url": "{{baseUrl}}/messages" } }
+      ]
+    },
+    {
+      "name": "5. پنل میزبان",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{hostToken}}" }] },
+      "item": [
+        { "name": "اقامتگاه‌های من", "request": { "method": "GET", "url": "{{baseUrl}}/properties/mine" } },
+        { "name": "رزروهای اقامتگاه‌های من", "request": { "method": "GET", "url": "{{baseUrl}}/bookings/hosting" } },
+        {
+          "name": "ثبت اقامتگاه جدید (draft)",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/properties",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"city_id\": 2,\n  \"type_id\": 2,\n  \"policy_id\": 2,\n  \"title\": \"سوئیت جدید با ویو دریا در رامسر\",\n  \"description\": \"سوئیت نوساز طبقه دوم\",\n  \"address\": \"مازندران، رامسر، خیابان ساحلی، کوچه یاس\",\n  \"latitude\": 36.9101,\n  \"longitude\": 50.6702,\n  \"amenity_ids\": [1, 2, 7, 13]\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('ساخته شد', () => pm.response.to.have.status(201));",
+            "pm.collectionVariables.set('newPropertyId', pm.response.json().id);"
+          ] } }]
+        },
+        {
+          "name": "افزودن واحد",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/properties/{{newPropertyId}}/units",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"سوئیت یک‌خوابه\",\n  \"max_guests\": 3,\n  \"bedrooms\": 1,\n  \"beds\": 2,\n  \"bathrooms\": 1,\n  \"base_price_per_night\": 2400000\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.collectionVariables.set('newUnitId', pm.response.json().id);"] } }]
+        },
+        {
+          "name": "فعال‌سازی اقامتگاه",
+          "request": {
+            "method": "PATCH", "url": "{{baseUrl}}/properties/{{newPropertyId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"active\"\n}" }
+          }
+        },
+        {
+          "name": "تنظیم قیمت ویژه و مسدودسازی روز",
+          "request": {
+            "method": "PUT", "url": "{{baseUrl}}/units/{{newUnitId}}/calendar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "[\n  {\"day\": \"{{checkIn}}\", \"price\": 3000000, \"is_available\": true},\n  {\"day\": \"{{checkOut}}\", \"price\": 2400000, \"is_available\": false}\n]" }
+          }
+        },
+        {
+          "name": "افزودن عکس",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/properties/{{newPropertyId}}/photos",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://picsum.photos/seed/ramsar-new/1024/768\",\n  \"sort_order\": 1\n}" }
+          }
+        },
+        {
+          "name": "ویرایش اقامتگاه دیگران (باید 403 بدهد)",
+          "request": {
+            "method": "PATCH", "url": "{{baseUrl}}/properties/4",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"تغییر غیرمجاز\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('دسترسی رد شد', () => pm.response.to.have.status(403));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "6. پنل ادمین",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}" }] },
+      "item": [
+        { "name": "فهرست کاربران", "request": { "method": "GET", "url": "{{baseUrl}}/users" } },
+        { "name": "اقامتگاه‌های draft", "request": { "method": "GET", "url": "{{baseUrl}}/properties?status=draft" } },
+        { "name": "همه رزروها", "request": { "method": "GET", "url": "{{baseUrl}}/bookings/hosting" } },
+        { "name": "کدهای تخفیف", "request": { "method": "GET", "url": "{{baseUrl}}/coupons" } },
+        {
+          "name": "افزودن شهر",
+          "request": {
+            "method": "POST", "url": "{{baseUrl}}/cities",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"سرعین\",\n  \"province\": \"اردبیل\"\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}
