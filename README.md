@@ -3,7 +3,7 @@
 پیاده‌سازی دیتابیس و APIهای اصلی سایت رزرو اقامتگاه بر اساس [ERD.md](ERD.md).
 نیازی به فرانت‌اند ندارد؛ همه چیز از طریق **Swagger** (داخل مرورگر) یا **Postman** قابل تست است.
 
-**فرانت‌اند «کلبه»** (Next.js): (Next.js): https://github.com/JamilZarei/kolbe — **نسخه آنلاین:** https://kolbe-ir.vercel.app
+**فرانت‌اند «کلبه»** (Next.js): https://github.com/JamilZarei/kolbe — **نسخه آنلاین:** https://kolbe-ir.vercel.app
 
 ---
 
