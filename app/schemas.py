@@ -34,6 +34,11 @@ class UserOut(ORM):
     created_at: datetime
 
 
+class UserAdminUpdate(BaseModel):
+    role: Literal["guest", "host", "admin"] | None = None
+    full_name: str | None = Field(default=None, min_length=3, max_length=120)
+
+
 class UserBrief(ORM):
     id: int
     full_name: str
@@ -158,6 +163,11 @@ class PhotoIn(BaseModel):
     sort_order: int = 0
 
 
+class PhotoUpdate(BaseModel):
+    sort_order: int | None = None
+    make_cover: bool = False
+
+
 class PhotoOut(ORM):
     id: int
     unit_id: int | None
@@ -177,6 +187,7 @@ class PropertyIn(BaseModel):
     check_in_time: time = time(14, 0)
     check_out_time: time = time(12, 0)
     amenity_ids: list[int] = []
+    host_id: int | None = Field(default=None, description="فقط ادمین: ثبت برای میزبان دیگر")
 
 
 class PropertyUpdate(BaseModel):
@@ -300,6 +311,7 @@ class BookingDetail(BookingOut):
     property_id: int
     property_title: str
     payments: list[PaymentOut]
+    review: "ReviewOut | None" = None
 
 
 class CancelOut(BaseModel):
@@ -340,3 +352,53 @@ class MessageOut(ORM):
     booking_id: int | None
     body: str
     sent_at: datetime
+    sender_name: str | None = None
+    receiver_name: str | None = None
+
+
+# ------------------------------------------------------------------ admin dashboard
+class DailyPoint(BaseModel):
+    day: date
+    revenue: int
+    bookings: int
+
+
+class CityStat(BaseModel):
+    city: str
+    bookings: int
+    revenue: int
+
+
+class TypeStat(BaseModel):
+    type: str
+    count: int
+
+
+class TopProperty(BaseModel):
+    id: int
+    title: str
+    city: str
+    bookings: int
+    revenue: int
+
+
+class AdminStats(BaseModel):
+    users_total: int
+    users_by_role: dict[str, int]
+    new_users_30d: int
+    properties_total: int
+    properties_by_status: dict[str, int]
+    units_total: int
+    bookings_total: int
+    bookings_by_status: dict[str, int]
+    revenue_total: int
+    avg_rating: float | None
+    review_count: int
+    daily: list[DailyPoint]
+    top_cities: list[CityStat]
+    by_type: list[TypeStat]
+    top_properties: list[TopProperty]
+    recent_bookings: list[BookingDetail]
+
+
+BookingDetail.model_rebuild()

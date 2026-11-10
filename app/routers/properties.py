@@ -1,14 +1,17 @@
+import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app import storage
+from app.config import settings
 from app.deps import DB, HostUser, OptionalUser, ensure_property_owner, get_or_404
 from app.models import (Amenity, Booking, CancellationPolicy, City, Photo, Property, PropertyType, Review,
                         Unit, UnitPriceCalendar, User, property_amenity)
-from app.schemas import (AmenityIdsIn, PhotoIn, PhotoOut, PropertyIn, PropertyListItem, PropertyOut,
+from app.schemas import (AmenityIdsIn, PhotoIn, PhotoOut, PhotoUpdate, PropertyIn, PropertyListItem, PropertyOut,
                          PropertyReviewOut, PropertyUpdate, UnitIn, UnitOut)
 from app.services.booking import ACTIVE_STATUSES
 
@@ -78,7 +81,8 @@ def check_refs(db: Session, city_id=None, type_id=None, policy_id=None, amenity_
 def search_properties(
     db: DB,
     user: OptionalUser,
-    q: str | None = Query(None, description="جستجو در عنوان و توضیحات"),
+    response: Response = None,
+    q: str | None = Query(None, description="جستجو در عنوان، توضیحات، شهر و استان"),
     city_id: int | None = None,
     city: str | None = Query(None, description="نام شهر، مثلاً: کاشان"),
     province: str | None = None,
@@ -94,6 +98,7 @@ def search_properties(
     sort: Literal["newest", "price_asc", "price_desc", "rating"] = "newest",
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    ids: list[int] | None = Query(None, include_in_schema=False),
 ):
     if (check_in is None) != (check_out is None):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "تاریخ ورود و خروج باید با هم ارسال شوند")
@@ -123,7 +128,11 @@ def search_properties(
     else:
         stmt = stmt.where(Property.status == "active")
     if q:
-        stmt = stmt.where(or_(Property.title.contains(q), Property.description.contains(q)))
+        q = q.strip()
+        stmt = stmt.where(or_(Property.title.contains(q), Property.description.contains(q),
+                              City.name.contains(q), City.province.contains(q), PropertyType.name.contains(q)))
+    if ids is not None:
+        stmt = stmt.where(Property.id.in_(ids))
     if city_id:
         stmt = stmt.where(Property.city_id == city_id)
     if city:
@@ -159,6 +168,9 @@ def search_properties(
         "price_desc": [units.c.min_price.desc().nulls_last()],
         "rating": [rating.c.avg_rating.desc().nulls_last(), Property.id],
     }[sort]
+    if response is not None:  # total for pagination, sent in a header so the body stays a plain list
+        total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
+        response.headers["X-Total-Count"] = str(total)
     stmt = stmt.order_by(*order).limit(limit).offset(offset)
 
     return [
@@ -204,7 +216,15 @@ def property_reviews(property_id: int, db: DB, limit: int = 20, offset: int = 0)
 @router.post("/properties", response_model=PropertyOut, status_code=201, summary="ثبت اقامتگاه جدید (میزبان)")
 def create_property(data: PropertyIn, user: HostUser, db: DB):
     check_refs(db, data.city_id, data.type_id, data.policy_id, data.amenity_ids)
-    prop = Property(host_id=user.id, status="draft", **data.model_dump(exclude={"amenity_ids"}))
+    host_id = user.id
+    if data.host_id is not None and data.host_id != user.id:
+        if user.role != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "فقط ادمین می‌تواند اقامتگاه را برای میزبان دیگری ثبت کند")
+        host = get_or_404(db, User, data.host_id, "میزبان")
+        if host.role not in ("host", "admin"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "کاربر انتخاب‌شده نقش میزبان ندارد")
+        host_id = host.id
+    prop = Property(host_id=host_id, status="draft", **data.model_dump(exclude={"amenity_ids", "host_id"}))
     if data.amenity_ids:
         prop.amenities = list(db.scalars(select(Amenity).where(Amenity.id.in_(data.amenity_ids))))
     db.add(prop)
@@ -240,8 +260,11 @@ def delete_property(property_id: int, user: HostUser, db: DB):
     if has_bookings:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "این اقامتگاه سابقه رزرو دارد و قابل حذف نیست؛ وضعیت آن را draft کنید")
+    urls = list(db.scalars(select(Photo.url).where(Photo.property_id == property_id)))
     db.execute(delete(Property).where(Property.id == property_id))
     db.commit()
+    # Photo rows go with the property (ON DELETE CASCADE); remove the uploaded files as well
+    storage.remove_property_photos(property_id, urls)
 
 
 @router.put("/properties/{property_id}/amenities", response_model=PropertyOut, summary="تعیین امکانات اقامتگاه")
@@ -274,6 +297,57 @@ def delete_photo(photo_id: int, user: HostUser, db: DB):
     ensure_property_owner(db.get(Property, photo.property_id), user)
     db.delete(photo)
     db.commit()
+    storage.remove_photo(photo.url)
+
+
+ALLOWED_IMAGES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+@router.post("/properties/{property_id}/photos/upload", response_model=list[PhotoOut], status_code=201,
+             summary="آپلود فایل عکس (jpg/png/webp، چند فایل با هم)")
+async def upload_photos(property_id: int, user: HostUser, db: DB, files: list[UploadFile] = File(...),
+                        unit_id: int | None = None):
+    prop = get_or_404(db, Property, property_id, "اقامتگاه")
+    ensure_property_owner(prop, user)
+    if unit_id is not None and get_or_404(db, Unit, unit_id, "واحد").property_id != property_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "این واحد متعلق به این اقامتگاه نیست")
+    if not files or len(files) > 10:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "بین ۱ تا ۱۰ فایل ارسال کنید")
+
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    contents = []
+    for f in files:
+        ext = ALLOWED_IMAGES.get(f.content_type or "")
+        if ext is None:
+            raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                                f"فرمت فایل {f.filename} مجاز نیست (فقط jpg، png، webp)")
+        data = await f.read()
+        if len(data) > max_bytes:
+            raise HTTPException(413, f"حجم فایل {f.filename} بیش از {settings.max_upload_mb} مگابایت است")
+        contents.append((ext, f.content_type, data))
+
+    next_order = (db.scalar(select(func.max(Photo.sort_order)).where(Photo.property_id == property_id)) or 0) + 1
+    photos = []
+    for i, (ext, content_type, data) in enumerate(contents):
+        url = storage.save_photo(property_id, f"{uuid.uuid4().hex}{ext}", data, content_type)
+        photo = Photo(property_id=property_id, unit_id=unit_id, url=url, sort_order=next_order + i)
+        db.add(photo)
+        photos.append(photo)
+    db.commit()
+    return photos
+
+
+@router.patch("/photos/{photo_id}", response_model=PhotoOut, summary="تغییر ترتیب عکس / انتخاب به‌عنوان کاور")
+def update_photo(photo_id: int, data: PhotoUpdate, user: HostUser, db: DB):
+    photo = get_or_404(db, Photo, photo_id, "عکس")
+    ensure_property_owner(db.get(Property, photo.property_id), user)
+    if data.make_cover:
+        first = db.scalar(select(func.min(Photo.sort_order)).where(Photo.property_id == photo.property_id)) or 0
+        photo.sort_order = first - 1
+    elif data.sort_order is not None:
+        photo.sort_order = data.sort_order
+    db.commit()
+    return photo
 
 
 @router.post("/properties/{property_id}/units", response_model=UnitOut, status_code=201,

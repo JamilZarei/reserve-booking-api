@@ -2,13 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from app.config import ON_VERCEL, settings, uploads_path
 from app.database import engine
-from app.routers import auth, bookings, catalog, misc, properties, units
+from app.routers import admin, auth, bookings, catalog, misc, properties, units
 
 app = FastAPI(
-    title="API سامانه رزرو اقامتگاه",
+    title="API کلبه — سامانه رزرو اقامتگاه",
     version="1.0.0",
     description=(
         "بک‌اند سایت رزرو اقامتگاه (ویلا، سوئیت، بوم‌گردی، هتل) بر اساس ERD پروژه.\n\n"
@@ -43,10 +45,18 @@ def swagger_ui() -> HTMLResponse:
     return HTMLResponse(page.body.decode().replace("</head>", RTL_STYLE + "</head>"))
 
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"],
+                   allow_headers=["*"], expose_headers=["X-Total-Count"])
+
+# Uploaded photos (and the seed photos) are served from /uploads. On Vercel the seed photos are deployed
+# under public/uploads (served by the CDN) and new uploads go to Vercel Blob, so nothing is mounted there.
+if not ON_VERCEL:
+    UPLOADS = uploads_path()
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
 
 for r in (auth.router, catalog.router, properties.router, units.router, bookings.router,
-          misc.coupons, misc.favorites, misc.messages):
+          misc.coupons, misc.favorites, misc.messages, admin.router):
     app.include_router(r)
 
 

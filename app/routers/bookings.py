@@ -2,7 +2,7 @@ import secrets
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,7 +23,7 @@ def booking_detail(b: Booking) -> BookingDetail:
     return BookingDetail(
         **BookingOut.model_validate(b).model_dump(),
         guest=b.guest, unit=b.unit, property_id=b.unit.property_id,
-        property_title=b.unit.property.title, payments=b.payments,
+        property_title=b.unit.property.title, payments=b.payments, review=b.review,
     )
 
 
@@ -79,16 +79,18 @@ def my_bookings(user: CurrentUser, db: DB, status_filter: BookingStatus | None =
 
 @router.get("/hosting", response_model=list[BookingDetail],
             summary="رزروهای اقامتگاه‌های من (میزبان) / همه رزروها (ادمین)")
-def hosting_bookings(user: HostUser, db: DB, status_filter: BookingStatus | None = Query(None, alias="status"),
-                     property_id: int | None = None, limit: int = 50, offset: int = 0):
-    stmt = (select(Booking).join(Unit, Unit.id == Booking.unit_id).join(Property, Property.id == Unit.property_id)
-            .order_by(Booking.check_in.desc()).limit(limit).offset(offset))
+def hosting_bookings(user: HostUser, db: DB, response: Response,
+                     status_filter: BookingStatus | None = Query(None, alias="status"),
+                     property_id: int | None = None, limit: int = Query(50, ge=1, le=200), offset: int = 0):
+    stmt = select(Booking).join(Unit, Unit.id == Booking.unit_id).join(Property, Property.id == Unit.property_id)
     if user.role != "admin":
         stmt = stmt.where(Property.host_id == user.id)
     if status_filter:
         stmt = stmt.where(Booking.status == status_filter)
     if property_id:
         stmt = stmt.where(Property.id == property_id)
+    response.headers["X-Total-Count"] = str(db.scalar(select(func.count()).select_from(stmt.subquery())))
+    stmt = stmt.order_by(Booking.created_at.desc(), Booking.id.desc()).limit(limit).offset(offset)
     return [booking_detail(b) for b in db.scalars(stmt)]
 
 

@@ -13,7 +13,7 @@ from app.config import settings  # noqa: E402
 
 TEST_DB_URL = settings.database_url.rsplit("/", 1)[0] + "/reserve_test"
 os.environ["DATABASE_URL"] = TEST_DB_URL
-subprocess.run([sys.executable, str(ROOT / "scripts" / "init_db.py")], check=True, env=os.environ,
+subprocess.run([sys.executable, str(ROOT / "scripts" / "init_db.py"), "--no-extra"], check=True, env=os.environ,
                cwd=ROOT, capture_output=True)
 
 settings.database_url = TEST_DB_URL

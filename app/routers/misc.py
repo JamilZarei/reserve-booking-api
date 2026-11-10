@@ -50,13 +50,13 @@ def check_coupon(code: str, _: CurrentUser, db: DB):
 # ------------------------------------------------------------------ favorites
 @favorites.get("", response_model=list[PropertyListItem], summary="اقامتگاه‌های مورد علاقه من")
 def my_favorites(user: CurrentUser, db: DB):
-    ids = set(db.scalars(select(Favorite.property_id).where(Favorite.user_id == user.id)))
+    ids = list(db.scalars(select(Favorite.property_id).where(Favorite.user_id == user.id)))
     if not ids:
         return []
-    items = search_properties(db=db, user=None, q=None, city_id=None, city=None, province=None, type_id=None,
-                              guests=None, check_in=None, check_out=None, min_price=None, max_price=None,
-                              amenity_ids=None, status_filter=None, sort="newest", limit=100, offset=0)
-    return [i for i in items if i.id in ids]
+    return search_properties(db=db, user=None, response=None, q=None, city_id=None, city=None, province=None,
+                             type_id=None, guests=None, check_in=None, check_out=None, min_price=None,
+                             max_price=None, amenity_ids=None, status_filter=None, sort="newest", limit=100,
+                             offset=0, ids=ids)
 
 
 @favorites.post("/{property_id}", status_code=201, summary="افزودن به علاقه‌مندی‌ها")
@@ -92,7 +92,7 @@ def send_message(data: MessageIn, user: CurrentUser, db: DB):
     db.add(msg)
     db.commit()
     db.refresh(msg)
-    return msg
+    return with_names(db, [msg])[0]
 
 
 @messages.get("", response_model=list[MessageOut], summary="پیام‌های من (ارسالی و دریافتی)")
@@ -104,4 +104,11 @@ def my_messages(user: CurrentUser, db: DB, with_user_id: int | None = None, book
                               and_(Message.sender_id == with_user_id, Message.receiver_id == user.id)))
     if booking_id:
         stmt = stmt.where(Message.booking_id == booking_id)
-    return db.scalars(stmt.order_by(Message.sent_at).limit(limit).offset(offset)).all()
+    return with_names(db, db.scalars(stmt.order_by(Message.sent_at).limit(limit).offset(offset)).all())
+
+
+def with_names(db, msgs: list[Message]) -> list[MessageOut]:
+    ids = {m.sender_id for m in msgs} | {m.receiver_id for m in msgs}
+    names = dict(db.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all()) if ids else {}
+    return [MessageOut(**MessageOut.model_validate(m).model_dump(exclude={"sender_name", "receiver_name"}),
+                       sender_name=names.get(m.sender_id), receiver_name=names.get(m.receiver_id)) for m in msgs]

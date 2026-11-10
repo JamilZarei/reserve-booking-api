@@ -3,6 +3,8 @@
 پیاده‌سازی دیتابیس و APIهای اصلی سایت رزرو اقامتگاه بر اساس [ERD.md](ERD.md).
 نیازی به فرانت‌اند ندارد؛ همه چیز از طریق **Swagger** (داخل مرورگر) یا **Postman** قابل تست است.
 
+**فرانت‌اند «کلبه»** (Next.js): (Next.js): https://github.com/JamilZarei/kolbe — **نسخه آنلاین:** https://kolbe-ir.vercel.app
+
 ---
 
 ## ۱. ساختار پروژه
@@ -60,6 +62,10 @@ ReserveERD-backend/
 | مهمان | سعید نوری (رزرو ۸ را تمام کرده و هنوز نظر نداده) | `saeed.nouri@reserve.test` | 09141175386 |
 
 ---
+
+### داده نمونه گسترده (seed_extra.sql)
+`scripts/gen_seed_extra.py` فایل `db/seed_extra.sql` را می‌سازد: **۲۰۰ اقامتگاه در ۴۰ شهر** (هتل‌های شناخته‌شده، هتل سنتی، بوم‌گردی، ویلا، کلبه، آپارتمان)، حدود ۴۰۰ واحد با قیمت‌های بازار ۱۴۰۵، حدود ۱۰۰۰ رزرو، ۶۰۰ نظر، و عکس‌های مرتبط با هر شهر (`uploads/seed`، منبع در `CREDITS.md`).
+`python scripts/init_db.py` همه را اعمال می‌کند؛ `--no-extra` فقط داده پایه را می‌سازد (تست‌ها از همین استفاده می‌کنند).
 
 ## ۳. نصب و اجرا (قدم‌به‌قدم)
 
@@ -187,6 +193,10 @@ pytest -v
 | تخفیف | `GET/POST /coupons`، `GET /coupons/{code}/check` | ادمین / کاربر |
 | علاقه‌مندی | `GET /favorites`، `POST/DELETE /favorites/{property_id}` | کاربر |
 | پیام | `POST /messages`، `GET /messages?with_user_id=&booking_id=` | کاربر |
+| پنل ادمین | `GET /admin/stats`، `PATCH /users/{id}` (تغییر نقش) | ادمین |
+| عکس | `POST /properties/{id}/photos/upload` (multipart، jpg/png/webp تا ۵MB)، `PATCH /photos/{id}` (کاور/ترتیب) | میزبان/ادمین |
+
+> فهرست‌های `GET /properties`، `GET /users` و `GET /bookings/hosting` تعداد کل را در هدر `X-Total-Count` برمی‌گردانند. فایل‌های آپلودی از مسیر `/uploads/...` سرو می‌شوند.
 
 ### چرخه وضعیت رزرو
 ```
@@ -195,3 +205,11 @@ pending ──(پرداخت موفق)──► confirmed ──(پس از تار
    └──────(لغو)──────► cancelled ◄──(لغو + استرداد طبق قانون لغو)
 ```
 **محاسبه استرداد:** اگر مهمان حداقل `free_cancel_days` روز قبل از ورود لغو کند، کل مبلغ؛ وگرنه `refund_percent` درصد برمی‌گردد. لغو توسط میزبان همیشه استرداد کامل دارد.
+
+## انتشار روی Vercel
+
+API روی https://kolbe-ir-api.vercel.app (پروژه `kolbe-ir-api`) منتشر شده است:
+- **دیتابیس:** Neon Postgres از Vercel Marketplace؛ `DATABASE_URL` خودکار تنظیم می‌شود (`postgres://` به `postgresql+psycopg://` تبدیل می‌شود و روی Vercel از `NullPool` استفاده می‌شود). پر کردن دیتابیس: `DATABASE_URL=<DATABASE_URL_UNPOOLED> python scripts/init_db.py`.
+- **عکس‌ها:** عکس‌های نمونه در `public/uploads/seed` از CDN سرو می‌شوند؛ عکس‌های آپلودی وقتی `BLOB_READ_WRITE_TOKEN` موجود باشد در Vercel Blob ذخیره می‌شوند (`app/storage.py`) و در حالت محلی روی دیسک.
+- **متغیرها:** `JWT_SECRET` (تصادفی)، `CORS_ORIGINS=https://kolbe-ir.vercel.app`.
+- **انتشار مجدد:** `powershell -File scripts\deploy_vercel.ps1`
